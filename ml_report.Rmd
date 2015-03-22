@@ -1,4 +1,4 @@
-```{r init echo=FALSE, message=FALSE}
+```{r init, echo=FALSE, message=FALSE}
 library(caret)
 library(dplyr)
 library(tidyr)
@@ -9,12 +9,20 @@ dat<-dat.full
 knitr::opts_chunk$set(echo=TRUE,warning=FALSE,message=FALSE) #option set for all md code 
 ```
 
+Introduction
+================================================================================
+Hi peer reviewer! I feel like there should be an introduction to the data set here and a few words about the task, but you know what? I reckon you know all that already. So I'm just going to nod at the proper report format and give you a straight-up description of what I did, hope that's ok.
 
 Data selection and cleanup
 ============================================================================
 
+First step was cleaning the data. I found three things that really needed doing. One was that many variables were only rarely observed. These variables were dropped. Another was that the classes were not evenly distributed over users, so any variable serving to identify a user would function as an effective predictor in the training data, but presumably not in out-of-sample data. To avoid this, user name and window variables were dropped, and raw timestamps were normalized by subtracting each participant's starting time from each entry.
+
+The third thing was a bunch of variables that looked like they should be numbers but were rendering as factors because there were empty strings and error messages mixed in. I tried to parse them as numbers and recorde the parsing failures as NA, which worked ok, but the variables affected by this had so many NA values they mostly ended up getting dropped by the NA check anyway. 
+
+I also looked for lack of variation in the included variables, but nearZeroVar didn't end up dropping anything at its default settings. Many variables were pretty skewed, suggesting some pre-processing would be appropriate, but that was handled by caret's 'train' so I won't describe it here.
+
 ```{r pruning, echo=TRUE}
-#The original data contain user identifiers. Users probably have distinctive movement patterns, and the classes are not evenly distributed over users, possibly allowing user name to become a spurious predictor effective in the training data only. Training data was anonymized (somewhat) by removing user_name, new_window, and num_window, dropping cvtd_timestamps and converting raw timestamps to relative timestamps.
 cleandf<-function(dat){
 dat.clean<-as.data.frame(dat%>%
   group_by(user_name)%>%
@@ -28,7 +36,6 @@ for(name in names(dat.clean)){
   #remove variables with many NA values
   if(sum(is.na(dat.clean[,name]))>=nrow(dat.clean)/4)dat.clean<-dat.clean[,-which(names(dat.clean)==name)]
 }
-
 
 #Also remove uninformative columns (low variation).
 if(length(nearZeroVar(dat.clean)>0))dat.good<-dat.clean[,-nearZeroVar(dat.clean)]#'if' necessary, selecting -<empty vector> cols selects no cols not all of them. :-(
@@ -44,10 +51,17 @@ dat.minitest<-sample_n(dat.full,200)
 
 Classifier
 ====================================================================================
+I tried a couple things that didn't work before settling on this simple Random Forest implementation. Isolating the source of the data (arm, belt, dumbell) doesn't seem to make a whole lot of difference, it's better to leave them mixed. I also tried fitting lda instead of random forest. Looks like it's faster but less accurate. Here I'm going with the random forest version and dealing with the slowness by training on a small subsample of the original data set.
+
+
 ```{r classifier}
-#also tried lda, it's faster but not as accurate.
 fitrf<-train(classe~.,method="rf",preProcess=c("center","scale"),data=dat.clean)
 ```
+
+The only problem with this approach is that I want to give you something interesting to think about, peer reviewer, and you're not going to be intrigued by a call to caret on a subsample of the training data.
+
+So here's my attempt to go one extra yard. Since I'm sampling from the training data anyway, I sample twice and run a little mini-test on more *training* data. Then I try and train another random forest model, but this time to predict if my classifier is accurate. I can then use this classifier to split data into 'easy cases' and 'hard cases'. The 'hard cases' get their own classifier, trained on a selection of hard cases from the training data (as identified by the 'hard cases' classifier.) The final combined classifier makes predictions by first deciding if the target predictors are from a hard or an easy case, and then using the appropriate classifier.
+
 
 ```{r checking}
 preds<-predict(fitrf,newdata=dat.minitest)
@@ -58,13 +72,13 @@ sobspotter<-train(hardcase~.,method="rf",preProcess=c("center","scale"),data=dat
 
 hardcases<-predict(sobspotter,newdata=dat.full)
 
-sobs<-sample_n(dat.full[hardcases=="TRUE",],200)
+sobs<-sample_n(dat.full[hardcases=="TRUE",],min(200,sum(hardcases=="TRUE")))
 sobhandler<-train(classe~.,method="rf",preProcess=c("center","scale"),data=sobs)
 ```
 
 ```{r test}
-dat.test<-read.csv("pml-testing.csv")
-dat.test<-sample_n(dat.full,500) #cleandf(dat.test)
+#dat.test<-read.csv("pml-testing.csv")
+dat.test<-sample_n(dat.full,1000)
 
 easypred<-as.character(predict(fitrf,newdata=dat.test))
 hardpred<-as.character(predict(sobhandler,newdata=dat.test))
@@ -73,6 +87,12 @@ usehard<-as.character(predict(sobspotter,newdata=dat.test))
 dat.test$prediction<-ifelse(usehard=="TRUE",hardpred,easypred)
 dat.test$accurate<-dat.test$prediction==dat.test$classe
 ```
+
+From reading the description of the data set, I expect borderline cases to be systematically different from easy cases. Not sure if just piling up meta-random-forests is a good way of trying to exploit that, but I think it is buying a small performance increase. The 'hardcases' classifier is pretty good at identifying which cases will be incorrect under the first classifier. In the simulation above, the first classifier makes 270 misclassifications, and the hard-cases-spotter correctly flags 81 of them at a cost of 66 false alarms. The false alarms don't always turn into bad predictions, The hardcases classifier  misclassifies 11 of the cases handed to it, but only converts 4 correct predictions into incorrect predictions, for a total net gain of 70 correct predictions out of 1000. Just less than one percent but at least going in the right direction.
+
+I haven't cross-validated the improvement from trying to split cases into hard and easy, (did I mention how slow Random Forest is on my machine?) but I *have* tried to cross-validate the accuracy of the final combined process. I expect about 0.790 accuracy on out-of-sample data, based on 70 simulation runs with different training-data draws (95% CI from .783 to .797, code in ml_report.R). This performance is based on classifiers trained on subsets of only 200 examples, it would be really nice to increase that number, oh well.
+
+Thanks for reading. And thanks in advance for any comments you might leave, I'll be sure to read through them carefully!
 
 Data citation
 =====================================================

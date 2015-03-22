@@ -50,7 +50,7 @@ sobs<-sample_n(dat.full[hardcases=="TRUE",],samplesize)
 sobhandler<-train(classe~.,method="rf",preProcess=c("center","scale"),data=sobs)
 
 dat.test<-read.csv("pml-testing.csv")
-dat.test<-sample_n(dat.full,samplesize*3) #can be larger because predict is fast, only train is slow.
+dat.test<-sample_n(dat.full,500) #I know, there's a chance of getting some training examples in the test set, but my samples are so small compared to the size of the data set, I'll wear it.
 
 easypred<-as.character(predict(fitrf,newdata=dat.test))
 hardpred<-as.character(predict(sobhandler,newdata=dat.test))
@@ -63,7 +63,14 @@ return(sum(dat.test$accurate)/nrow(dat.test))
 }
 
  accuracy<-c()
- for(i in 1:100){
+ for(i in 1:70){
    print(paste(i,Sys.time()))
   accuracy<-c(accuracy,getAccuracy(200)) 
  }
+
+hist(accuracy)
+se.est<-sd(accuracy)/sqrt(length(accuracy))
+CI.low=mean(accuracy)+qnorm(.025)*se.est
+CI.high=mean(accuracy)+qnorm(.975)*se.est
+
+
